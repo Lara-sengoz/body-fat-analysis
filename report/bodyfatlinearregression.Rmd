@@ -1,0 +1,588 @@
+---
+title: "Analysis of Body fat percentage"
+author: "Lara Sengoz"
+output: html_document
+---
+## Introduction
+
+-   The aim is to accurately estimate body fat percentage while minimising the cost of measurement
+
+## Variables in the Data set
+
+-   Within the data set, body fat percentage is obtained using Siri's equation
+
+-   Formula for Body Mass Index (BMI):
+
+$$
+BMI = \frac{\text{Weight}}{\text{Height}^2} \; (\mathrm{kg/m^2})
+$$
+
+```{r}
+library(tidyverse)
+BMI = readxl::read_xlsx("DataOnBMI.xlsx")
+BMI_cleaned <- BMI |>
+  janitor::clean_names() |>
+  mutate(bmi = weight_kg / ((height / 100)^2))
+
+```
+
+```{r}
+BMI_cleaned <- BMI_cleaned |> filter(bmi >= 10, bmi <= 60) |> filter(body_fat_siri_equ > 1)
+```
+
+```{r}
+summary(BMI_cleaned)
+```
+## Initial Regression Model
+
+-   We first consider the simple linear regression model as given below,
+
+  $$
+    BFPercent_i = \beta_0 + \beta_1 BMI_i + u_i
+  $$
+
+-   Where $BFPercent_i$ is the body fat percentage found using Siri's equation
+
+
+```{r}
+m0 <- lm(body_fat_siri_equ ~ bmi, data = BMI_cleaned)
+print(summary(m0))
+```
+## Assumption 1 : Linearity
+
+-   Linearity is required to ensure the model does not systematically under predict or over predict specific ranges of the data.
+
+```{r}
+#| fig-align: center
+#| out-width: 100%   # make the rendered image span the slide width
+#| fig-width: 12     # inches used to render the plot (higher => more pixels)
+#| fig-height: 7
+#| fig-dpi: 220
+library(ggplot2)
+
+
+BMI_cleaned$residuals <- m0$residuals
+
+ggplot(BMI_cleaned, aes(x = bmi, y = residuals)) +
+  geom_point(alpha = 0.7) +
+  geom_hline(yintercept = 0, colour = "blue") +
+  labs(
+    x = "BMI",
+    y = "Residuals",
+    title = "Residuals vs BMI"
+  ) +
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5))
+```
+
+## Assumption 2 : Independence
+
+-   The data must be randomly sampled (and thus independent) to ensure certain characteristics of the data are not over/under-represented
+- University researchers at BYU have not clarified independence, therefore independence will be assumed.
+
+## Assumption 3 : Homoskedasticity
+
+-   Homoskedasticity ensures our sampling variances are unbiased, which is required for hypothesis tests on the regression to have valid results
+
+```{r}
+#| fig-align: center
+#| out-width: 100%   # make the rendered image span the slide width
+#| fig-width: 12     # inches used to render the plot (higher => more pixels)
+#| fig-height: 7
+#| fig-dpi: 220
+
+fitted <- m0$fitted.values
+
+ggplot(BMI_cleaned, aes(x = fitted, y = residuals)) +
+  geom_point(size = 1) +
+  geom_hline(yintercept = 0,  color = "steelblue") +
+  labs(
+    title = "Residuals vs Fitted Values",
+    x = "Fitted Values",
+    y = "Residuals"
+  ) +
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5))
+```
+## Assumption 4 : Normality
+
+-   To check the normality of the (unobservable) error term, we check the normality of the residuals, which are used to estimate the error term.
+
+```{r}
+#| fig-align: center
+#| out-width: 100%   # make the rendered image span the slide width
+#| fig-width: 12     # inches used to render the plot (higher => more pixels)
+#| fig-height: 7
+#| fig-dpi: 220
+
+ggplot(BMI_cleaned, aes(sample = residuals)) +
+  stat_qq(color = "black" , size = 1) +
+  stat_qq_line(color = "darkblue") +
+  labs(
+    title = "Q-Q Plot of Regression Residuals",
+    x = "Theoretical Quantiles",
+    y = "Sample Quantiles"
+  ) +
+  theme_minimal() + 
+  theme(
+    plot.title = element_text(hjust = 0.5))
+
+```
+
+
+## Model Selection Methods
+
+-   All assumptions are met in the simple linear regression model
+
+-   The correlation heat map below visualises multicollinearity
+
+```{r}
+library(ggplot2)
+library(reshape2)
+
+cor_mat <- cor(BMI_cleaned, use = "complete.obs")
+melted_cor_mat <- melt(cor_mat)
+
+ggplot(data = melted_cor_mat, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white",
+                       midpoint = 0, limit = c(-1,1),
+                       name = "Correlation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        axis.title = element_blank()) +
+  coord_fixed()
+```
+
+```{r}
+library(dplyr)
+
+BMI_cleaned <- BMI_cleaned |> 
+  dplyr::select(-underwater_density) #removed due to high colinearity
+```
+
+## Stepwise Selection - How it Works
+
+-   Stepwise regression aims to minimize AIC
+$$AIC = n \ln\!\left(\frac{RSS}{n}\right) + 2p$$
+-   Where $n$ = sample size, $RSS$ = residual sum of squares, and $p$ = number of estimated parameters (including the intercept).
+
+## Scaling
+- Scaling variables becomes necessary for comparing relative importance of variables and to analyse effect sizes.
+
+```{r}
+BMI_scaled <- BMI_cleaned |>
+  mutate(across(c(bmi, age, height, weight_kg, hip_circumf, abdomen2circumf,wrist_circumf, knee_circumf, thigh_circumf,forearm_circumf, extend_biceps_circumf, ankle_circumf, chest_circumf, neck_circumf), scale))
+```
+
+## Stepwise Selection - How it Works
+
+-   Stepwise regression aims to minimize AIC
+
+$$AIC = n \ln\!\left(\frac{RSS}{n}\right) + 2p$$
+-   Where $n$ = sample size, $RSS$ = residual sum of squares, and $p$ = number of estimated parameters (including the intercept).
+
+## Stepwise Selection - Performance
+```{r}
+#linear linear
+BMI_cleaned <- subset(BMI_cleaned, body_fat_siri_equ > 0)
+M_null <- lm(body_fat_siri_equ ~ 1, data = BMI_cleaned)
+M_full <- lm(body_fat_siri_equ ~ . - abdomen2circumf - height - weight_kg - residuals , data = BMI_cleaned)
+
+
+stepwise_model <- stepAIC(M_null,
+                          scope = list(lower = M_null, upper = M_full),
+                          direction = "both",
+                          trace = FALSE)
+
+library(MASS)
+#log linear
+BMI_log <- subset(BMI_cleaned, body_fat_siri_equ > 0)
+
+M_null <- lm(log(body_fat_siri_equ) ~ 1, data = BMI_log)
+M_full <- lm(log(body_fat_siri_equ) ~ .  -height - weight_kg - abdomen2circumf - residuals, data = BMI_log)
+
+step_log <- step(M_null,
+                 scope = list(lower = M_null, upper = M_full),
+                 direction = "both",
+                 trace = FALSE)
+
+#Linear log
+BMI_linlog <- subset(BMI_cleaned, body_fat_siri_equ > 0)
+
+M_null_linlog <- lm(body_fat_siri_equ ~ 1, data = BMI_linlog)
+M_full_linlog <- lm(body_fat_siri_equ ~ 
+                      log(age) +
+                      log(neck_circumf) +
+                      log(chest_circumf) +
+                      log(thigh_circumf) +
+                      log(knee_circumf) +
+                      log(ankle_circumf) +
+                      log(extend_biceps_circumf) +
+                      log(forearm_circumf) +
+                      log(wrist_circumf) +
+                      log(hip_circumf) +
+                      log(bmi),
+                    data = BMI_linlog)
+
+step_linlog <- step(M_null_linlog,
+                    scope = list(lower = M_null_linlog, upper = M_full_linlog),
+                    direction = "both",
+                    trace = FALSE)
+```
+
+```{r}
+library(caret)
+
+set.seed(123)
+
+BMI_cleaned <- subset(BMI_cleaned, body_fat_siri_equ > 0)
+trControl <- trainControl(method = "cv", number = 10, verboseIter = FALSE)
+
+cv_step <- train(
+  formula(stepwise_model),   
+  data = BMI_cleaned,
+  method = "lm",
+  trControl = trControl
+)
+library(caret)
+set.seed(123)
+BMI_log <- subset(BMI_cleaned, body_fat_siri_equ > 0)
+
+trControl <- trainControl(method = "cv", number = 10, verboseIter = FALSE)
+
+cv_log <- train(
+  formula(step_log),       
+  data = BMI_log,
+  method = "lm",
+  trControl = trControl
+)
+library(caret)
+
+set.seed(123)
+BMI_linlog <- subset(BMI_cleaned, body_fat_siri_equ > 0)
+trControl <- trainControl(method = "cv", number = 10, verboseIter = FALSE)
+cv_linlog <- train(
+  formula(step_linlog), 
+  data = BMI_linlog,
+  method = "lm",
+  trControl = trControl
+)
+
+```
+
+-   Figure 1 - Measure of In-sample Model performance
+
+-   Figure 2 - Measure of Out-of-sample Model Performance
+
+```{r}
+#| echo: false
+#| fig-show: hold
+#| layout-ncol: 2
+#| fig-align: center
+#| fig-width: 10          
+#| fig-height: 6          
+
+library(ggplot2)
+
+
+in_sample <- data.frame(
+  Model = c("Linear-linear", "Log-linear", "Linear-log"),   
+  Adjusted_R2 = c(0.615, 0.492, 0.635)                
+)
+
+in_sample$Model <- factor(in_sample$Model,
+                          levels = c("Linear-linear","Log-linear","Linear-log"))
+
+p_in <- ggplot(in_sample, aes(x = Model, y = Adjusted_R2, fill = Model)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  geom_text(aes(label = round(Adjusted_R2, 3)), vjust = -0.5, size = 5) +
+  labs(title = "In-sample Model Comparison",
+       subtitle = "Higher Adjusted R² = better training fit",
+       y = "Adjusted R²", x = NULL,
+       caption = "Figure 1") +
+  scale_fill_manual(values = c(
+  "Linear-linear" = "#a6cee3",  
+  "Log-linear"    = "#1f78b4",  
+  "Linear-log"    = "#08306b"   
+  )) +
+  theme_minimal(base_size = 15) +
+  theme(legend.position = "none",
+        plot.caption = element_text(hjust = 0.5, face = "bold"),
+        plot.margin  = margin(5.5, 5.5, 18, 5.5))
+
+results <- data.frame(
+  Model    = c("Linear-linear", "Log-linear", "Linear-log"),  
+  Rsquared = c(cv_step$results$Rsquared[1],
+               cv_log$results$Rsquared[1],
+               cv_linlog$results$Rsquared[1])
+)
+results$Model <- factor(results$Model,
+                        levels = c("Linear-linear","Log-linear","Linear-log"))
+
+p_out <- ggplot(results, aes(x = Model, y = Rsquared, fill = Model)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  geom_text(aes(label = round(Rsquared, 3)), vjust = -0.5, size = 5) +
+  labs(title = "Out-of-sample Model Comparison (10-fold CV)",
+       subtitle = "Higher R² = better predictive performance",
+       y = "Cross-validated R²", x = NULL,
+       caption = "Figure 2") +
+  scale_fill_manual(values = c(
+  "Linear-linear" = "#a6cee3",  
+  "Log-linear"    = "#1f78b4",  
+  "Linear-log"    = "#08306b"   
+  )) +
+  theme_minimal(base_size = 15) +
+  theme(legend.position = "none",
+        plot.caption = element_text(hjust = 0.5, face = "bold"),
+        plot.margin  = margin(5.5, 5.5, 18, 5.5))
+
+p_in
+p_out
+```
+```{r}
+car::vif(cv_linlog$finalModel)
+car::vif(cv_step$finalModel)
+```
+## Exhaustive Selection - How it Works
+
+-   Exhaustive searching finds the full set of possible models to obtain the best solution.
+
+```{r}
+#| fig-align: center
+
+library(dplyr)
+
+BMI_cleaned <- BMI_cleaned |> 
+  dplyr::select(-residuals, -height, -weight_kg, -abdomen2circumf)
+
+library(lmSubsets)
+exh = lmSubsets(body_fat_siri_equ~., data = BMI_cleaned, nbest = 14)
+plot(exh)
+
+
+exhsum = summary(exh)
+st <- exhsum$stats
+i_min <- which.min(st$BIC)
+best_size  <- st$SIZE[i_min]
+best_size
+size_4 = subset(st, SIZE == 4)
+row = which.min(size_4$BIC)
+size_4model = size_4$BEST[row]
+coef4 = coef(exh, size = 4, best = size_4model)
+coef4
+```
+
+## Exhaustive Selection - Performance
+
+```{r}
+inter = names(coef4)[-1]
+formula = as.formula(paste("body_fat_siri_equ ~", paste(inter, collapse = " + ")))
+mod_exh = lm(formula, data = BMI_cleaned)
+
+library(car)
+cat("Variance Inflation Factors (VIF) for Exhaustive Model:\n")
+vif(mod_exh)
+
+```
+
+```{r}
+set.seed(123)
+setup = trainControl(method = 'cv', number = 10)
+cvexh = train(formula(mod_exh), data = BMI_cleaned, method = "lm", trControl = setup)
+```
+
+```{r}
+insampler2 = summary(mod_exh)$r.squared
+insampleadjr2 = summary(mod_exh)$adj.r.squared
+insamplermse = sqrt(mean(residuals(mod_exh)^2))
+insamplemae = mean(abs(residuals(mod_exh)))
+
+row = cvexh$results[which.min(cvexh$results$RMSE), ]
+outsampler2 = row$Rsquared
+outsamplermse=row$RMSE
+outsamplemae = row$MAE
+
+n = nrow(BMI_cleaned)
+p = length(coef(mod_exh)) - 1
+outsampleadjr2 = 1 - (1 - outsampler2)*((n - 1)/(n - p - 1))
+
+measure = c("R2", "Adjusted R2", "RMSE", "MAE")
+
+df = data.frame(
+  measure = rep(measure, each = 2),
+  performance = c(insampler2, outsampler2, insampleadjr2, outsampleadjr2,insamplermse, outsamplermse, insamplemae, outsamplemae),
+  type = rep(c("In-sample", "Out-of-sample"), times = length(measure)))
+
+plot = ggplot(df, aes(x = measure, y = performance, fill = type)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.5), alpha = 1) +
+  geom_text(aes(label = round(performance, 3)),
+            position = position_dodge(width = 0.8),
+            vjust = -0.3, size = 4) +
+  labs(title = "In-sample vs Out-of-sample Performance (Exhaustive Search)", y = "Metric Value", x = NULL) +
+  scale_fill_manual(values = c(
+  "In-sample" = "#a6cee3",  
+  "Out-of-sample"    = "#08306b"   
+  )) +
+  theme_minimal(base_size = 10) +
+  theme(legend.position = "bottom", panel.grid.major.x = element_blank(), plot.title = element_text(hjust = 0.5))
+
+print(plot)
+```
+## Final Model Choice
+
+-   Out of Sample adjusted R square for the step wise model is slightly higher, indicating marginally better predictive performance compared to the exhaustive model.
+
+```{r}
+#| echo: false
+#| fig-align: center
+#| fig-width: 9
+#| fig-height: 5
+adj_all <- data.frame(
+  searches = rep(c("Exhaustive", "Stepwise (Linear–log)"), each = 2),
+  Type   = factor(rep(c("In-sample", "Out-of-sample"), times = 2),
+                  levels = c("In-sample","Out-of-sample")),
+  adjusted_r2 = c(
+    0.595, 0.613,
+    0.632, 0.635))
+ggplot(adj_all, aes(x = searches, y = adjusted_r2, fill = Type)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.5) +
+  geom_text(aes(label = round(adjusted_r2, 3)), position = position_dodge(width = 0.6), vjust = -0.4, size = 5) +
+  labs(title = "Adjusted R²: Exhaustive vs Stepwise", subtitle = "In-sample vs Out-of-sample (10-fold CV)", x = NULL, y = "Adjusted R²") +
+  scale_fill_manual(values = c(
+    "In-sample" ="#a6cee3",
+    "Out-of-sample" ="#08306b")) +
+  scale_y_continuous(
+    limits = c(0, max(adj_all$adjusted_r2) * 1.1),
+    expand = expansion(mult = c(0, 0.05))) +
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_blank(),
+    plot.title   = element_text(hjust = 0.5, face = "bold"),
+    plot.caption = element_text(hjust = 0.5, face = "bold"),
+    plot.margin  = margin(5.5, 5.5, 18, 5.5)
+  )
+
+```
+## Assumption Checking: Linearity & Homoskedasticity 
+
+-   Random scatter around zero reflects linearity holds\
+-   Even spread of data conditioning on the fitted values reflects homoskedasticity holds
+
+```{r}
+#| fig-align: center
+#| out-width: 100%
+#| fig-width: 12
+#| fig-height: 7
+#| fig-dpi: 220
+
+library(ggplot2)
+
+df_res_fit <- data.frame(
+  fitted = fitted(step_linlog),
+  resid  = resid(step_linlog)
+)
+
+ggplot(df_res_fit, aes(x = fitted, y = resid)) +
+  geom_point(alpha = 0.7, colour = "black") +
+  geom_hline(yintercept = 0, colour = "blue", linewidth = 1) +
+  labs(
+    title = "Residuals vs Fitted Values (Final Model)",
+    x = "Fitted Values",
+    y = "Residuals"
+  ) +
+  theme_minimal(base_size = 14) + 
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", colour = "#08306b"),
+    axis.title = element_text(face = "bold")
+  )
+
+```
+
+## Assumption Checking: Normality
+
+-   Tests if residuals follow a normal distribution\
+-   Points close to diagonal reflects normality holds
+
+```{r}
+#| fig-align: center
+#| out-width: 100%
+#| fig-width: 12
+#| fig-height: 7
+#| fig-dpi: 220
+
+library(ggplot2)
+
+df_res <- data.frame(resid = resid(step_linlog))
+
+ggplot(df_res, aes(sample = resid)) +
+  stat_qq(size = 1.2, colour = "black") +
+  stat_qq_line(colour = "#08306b", linewidth = 1) +
+  labs(
+    title = "Q–Q Plot of Residuals (Final Model)",
+    x = "Theoretical Quantiles",
+    y = "Sample Quantiles"
+  ) +
+  theme_minimal(base_size = 14) + 
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", colour = "#08306b"),
+    axis.title = element_text(face = "bold")
+  )
+```
+
+## Discussion of Results
+
+-   Final model formula:
+
+$$
+BFPercent_i = \beta_0 + \beta_1 \log(\text{BMI}) 
++ \beta_2 \log(\text{Age})\\ +\beta_3 \log(\text{Wrist Circumference}) +\beta_4 \log(\text{Hip Circumference}) +\beta_5 \log(\text{Chest Circumference}) +\beta_6 \log(\text{Neck Circumference})
+$$
+```{r}
+#| echo: false
+#| fig-width: 7
+#| fig-height: 3.5
+#| out-width: 100%
+#| fig-align: left
+
+library(broom)
+library(dplyr)
+library(gt)
+
+coef_table <- broom::tidy(step_linlog, conf.int = TRUE, conf.level = 0.95) |>
+  mutate(
+    Beta = paste0("β", row_number() - 1),
+    Predictor = ifelse(term == "(Intercept)", "Intercept", term),
+    Predictor = paste0(Predictor, " (", Beta, ")")
+  ) |>
+  dplyr::select(Predictor, estimate, std.error, statistic, p.value, conf.low, conf.high)
+
+coef_table |>
+  gt() |>
+  tab_header(title = "Final Model Coefficients") |>
+  cols_label(
+    Predictor = "Predictor",
+    estimate  = "Estimate",
+    std.error = "Std. Error",
+    statistic = "t-value",
+    p.value   = "p-value",
+    conf.low  = "Lower 95% CI",
+    conf.high = "Upper 95% CI"
+  ) |>
+  fmt_number(columns = c("estimate","std.error","statistic","p.value","conf.low","conf.high"),
+             decimals = 3) |>
+  fmt_number(columns = "p.value", decimals = 4) |>
+  tab_source_note(source_note = "β terms represent coefficients in the model equation.")
+```
+
+
+
+
+
+
+
+
+
